@@ -11,7 +11,6 @@
 						//  (e.g. HTREEITEM, TVITEM, LVITEM)
 #include <fstream>
 #include <unordered_map> //Unordered map for Player Appearance start byte lookup
-#include "atlstr.h"
 #include "crypt.h"
 
 #pragma comment( lib, "Shlwapi.lib" )	//Needed to make Shlwapi.h link

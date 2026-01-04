@@ -9,6 +9,15 @@
 #pragma comment(lib, "Winmm.lib")
 #include <mmsystem.h>
 
+static void CopyAnsiToTchar(TCHAR* dest, size_t destCount, const char* src)
+{
+#ifdef UNICODE
+	MultiByteToWideChar(CP_ACP, 0, src, -1, dest, static_cast<int>(destCount));
+#else
+	strncpy_s(dest, destCount, src, _TRUNCATE);
+#endif
+}
+
 //----------------------------------------------------------------------
 /*Function prototypes*/
 /*
@@ -1138,53 +1147,57 @@ int loadDLL()
 	hPes15DecryptDLL = LoadLibrary(L"lib\\libpes15crypter.dll");
 	if (!hPes15DecryptDLL)
 	{
-		DWORD dw = GetLastError();
-		LPVOID lpMsgBuf;
-		if (FormatMessage(
-			FORMAT_MESSAGE_ALLOCATE_BUFFER |
-			FORMAT_MESSAGE_FROM_SYSTEM |
-			FORMAT_MESSAGE_IGNORE_INSERTS,
-			NULL,
-			dw,
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-			(LPTSTR)&lpMsgBuf,
-			0, NULL) == 0) {
-			MessageBox(NULL, TEXT("FormatMessage failed"), TEXT("Error"), MB_OK);
-			ExitProcess(dw);
-		}
-		MessageBox(NULL, (LPCTSTR)lpMsgBuf, TEXT("Error"), MB_OK);
-		LocalFree(lpMsgBuf);
-		MessageBox(NULL, _T("Failed to load hPes15DecryptDLL"), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
-		return EXIT_FAILURE;
+		//PES 15 support is optional; continue without this DLL.
+		createFileDescriptor15 = NULL;
+		destroyFileDescriptor15 = NULL;
+		decryptFile15 = NULL;
+		encryptFile15 = NULL;
+		return 0;
 	}
 	//Load functions from DLL
 	createFileDescriptor15 = (pf_createFileDescriptor15)GetProcAddress(hPes15DecryptDLL, "createFileDescriptor15");
 	if (!createFileDescriptor15)
 	{
-		MessageBox(NULL, _T("Failed to load createFileDescriptor15"), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
 		FreeLibrary(hPes15DecryptDLL);
-		return EXIT_FAILURE;
+		hPes15DecryptDLL = NULL;
+		createFileDescriptor15 = NULL;
+		destroyFileDescriptor15 = NULL;
+		decryptFile15 = NULL;
+		encryptFile15 = NULL;
+		return 0;
 	}
 	destroyFileDescriptor15 = (pf_destroyFileDescriptor15)GetProcAddress(hPes15DecryptDLL, "destroyFileDescriptor15");
 	if (!destroyFileDescriptor15)
 	{
-		MessageBox(NULL, _T("Failed to load destroyFileDescriptor15"), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
 		FreeLibrary(hPes15DecryptDLL);
-		return EXIT_FAILURE;
+		hPes15DecryptDLL = NULL;
+		createFileDescriptor15 = NULL;
+		destroyFileDescriptor15 = NULL;
+		decryptFile15 = NULL;
+		encryptFile15 = NULL;
+		return 0;
 	}
 	decryptFile15 = (pf_decryptFile15)GetProcAddress(hPes15DecryptDLL, "decryptFile15");
 	if (!decryptFile15)
 	{
-		MessageBox(NULL, _T("Failed to load decryptFile15"), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
 		FreeLibrary(hPes15DecryptDLL);
-		return EXIT_FAILURE;
+		hPes15DecryptDLL = NULL;
+		createFileDescriptor15 = NULL;
+		destroyFileDescriptor15 = NULL;
+		decryptFile15 = NULL;
+		encryptFile15 = NULL;
+		return 0;
 	}
 	encryptFile15 = (pf_encryptFile15)GetProcAddress(hPes15DecryptDLL, "encryptFile15");
 	if (!encryptFile15)
 	{
-		MessageBox(NULL, _T("Failed to load encryptFile15"), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
 		FreeLibrary(hPes15DecryptDLL);
-		return EXIT_FAILURE;
+		hPes15DecryptDLL = NULL;
+		createFileDescriptor15 = NULL;
+		destroyFileDescriptor15 = NULL;
+		decryptFile15 = NULL;
+		encryptFile15 = NULL;
+		return 0;
 	}
 
 	return 0;
@@ -1285,13 +1298,19 @@ void data_handler(const TCHAR *pcs_file_name, int pesVersion)
 {
 	int ii, current_byte, appearance_byte;
 
+	if (pesVersion <= 15 && (!createFileDescriptor15 || !decryptFile15 || !encryptFile15))
+	{
+		MessageBox(ghw_main, _T("PES15 support is unavailable.\r\nMissing libpes15crypter.dll."), _T("Error!"), MB_ICONEXCLAMATION | MB_OK);
+		return;
+	}
+
 	if(ghdescriptor) 
 	{
 		if(giPesVersion>=18)
 			destroyFileDescriptorNew((FileDescriptorNew*)ghdescriptor);
 		else if(giPesVersion >= 16)
 			destroyFileDescriptorOld((FileDescriptorOld*)ghdescriptor);
-		else
+		else if (destroyFileDescriptor15)
 			destroyFileDescriptor15((FileDescriptor15*)ghdescriptor);
 		ghdescriptor = NULL;
 	}
@@ -5186,7 +5205,6 @@ void player_names_to_positions()
 
 void export_squad(HWND hwnd)
 {
-	USES_CONVERSION; //required for A2W, W2A, A2T, T2A macros
 	int ii, jj, kk, num_on_team, csel;
 
 	if(gn_listsel < 0) 
@@ -5236,7 +5254,7 @@ void export_squad(HWND hwnd)
 	char defName[10];
 	strcpy(defName, gteams[gn_teamCbIndToArray[csel]].short_name);
 	strcat(defName, ".4ccs");
-	_tcscpy(outPath, A2T(defName));
+	CopyAnsiToTchar(outPath, _countof(outPath), defName);
 
 	ii=0;
 	const char *invalid_characters = "<>:\"/\\|?*";
@@ -5314,7 +5332,6 @@ void export_squad(HWND hwnd)
 
 void import_squad(HWND hwnd)
 {
-	USES_CONVERSION; //required for A2W, W2A, A2T, T2A macros
 	int ii, jj, kk, num_on_team, csel;
 
 	if(gn_listsel < 0) 
@@ -5362,7 +5379,9 @@ void import_squad(HWND hwnd)
 		if(strcmp(c_ver, gc_ver4ccs)!=0)
 		{
 			TCHAR message[200];
-			_stprintf(message, _T("Invalid 4CCS file!\r\nPlease save a 4CCS for this team using a %s-compatible version of 4ccEditor."), A2T(gc_ver4ccs));
+			TCHAR ver_t[8];
+			CopyAnsiToTchar(ver_t, _countof(ver_t), gc_ver4ccs);
+			_stprintf(message, _T("Invalid 4CCS file!\r\nPlease save a 4CCS for this team using a %s-compatible version of 4ccEditor."), ver_t);
 			MessageBox(ghw_main, message, _T("Version Error!"), MB_ICONERROR | MB_OK); //wrong file version
 			input_file.close();
 			return;
