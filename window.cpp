@@ -261,7 +261,7 @@ void setup_main(HWND H)
 
 	ghw_tabcon = CreateWindowEx(WS_EX_CONTROLPARENT, _T("SysTabControl32"), _T(""), 
 		TCS_OWNERDRAWFIXED | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 
-		530, 4, 555+144, 620, H, (HMENU)IDC_TAB_MAIN, GetModuleHandle(NULL), NULL);
+		530, 4, 555+204, 620, H, (HMENU)IDC_TAB_MAIN, GetModuleHandle(NULL), NULL);
 	setup_control(ghw_tabcon, ghFont, from_tab_proc);
 
 	TCITEM ti;
@@ -1193,6 +1193,55 @@ void setup_tab1(HWND H)
 	SendDlgItemMessage(ghw_tab1, IDT_ABIL_FORM, WM_SETTEXT, 0, (LPARAM)_T("1"));
 	SendDlgItemMessage(ghw_tab1, IDC_ABIL_INJU, UDM_SETRANGE, 0, MAKELPARAM(3, 1));
 	SendDlgItemMessage(ghw_tab1, IDT_ABIL_INJU, WM_SETTEXT, 0, (LPARAM)_T("1"));
+
+	// Add +/-5 buttons next to each ability edit control.
+	const int editShift = 12;
+	const int editW = 30;
+	const int stepBtnW = 28;
+	const int stepGap = 10;
+	const int stepPairGap = 8;
+	for (int editId = IDT_ABIL_ATKP; editId <= IDT_ABIL_INJU; editId += 2)
+	{
+		HWND hw_edit = GetDlgItem(ghw_tab1, editId);
+		if (!hw_edit) continue;
+		RECT rc;
+		GetWindowRect(hw_edit, &rc);
+		MapWindowPoints(HWND_DESKTOP, ghw_tab1, (LPPOINT)&rc, 2);
+
+		int newX = rc.left - editShift;
+		int newY = rc.top;
+		int newH = rc.bottom - rc.top;
+		SetWindowPos(hw_edit, NULL, newX, newY, editW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+		HWND hw_updown = GetDlgItem(ghw_tab1, editId + 1);
+		int updownW = 0;
+		if (hw_updown)
+		{
+			RECT rc_up;
+			GetWindowRect(hw_updown, &rc_up);
+			MapWindowPoints(HWND_DESKTOP, ghw_tab1, (LPPOINT)&rc_up, 2);
+			updownW = rc_up.right - rc_up.left;
+			if (updownW <= 0)
+			{
+				updownW = 16;
+			}
+			SetWindowPos(hw_updown, NULL, newX + editW, newY, updownW, newH, SWP_NOZORDER | SWP_NOACTIVATE);
+			SendMessage(hw_updown, UDM_SETBUDDY, (WPARAM)hw_edit, 0);
+		}
+
+		int buttonsX = newX + editW + updownW + stepGap;
+		int index = (editId - IDT_ABIL_ATKP) / 2;
+		HWND hw_plus = CreateWindowEx(0, _T("Button"), _T("+5"),
+			BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+			buttonsX, newY, stepBtnW, newH, ghw_tab1,
+			(HMENU)(IDB_ABIL_PLUS5_BASE + index), GetModuleHandle(NULL), NULL);
+		setup_control(hw_plus, ghFont, scale_cntl_proc);
+
+		HWND hw_minus = CreateWindowEx(0, _T("Button"), _T("-5"),
+			BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+			buttonsX + stepBtnW + stepPairGap, newY, stepBtnW, newH, ghw_tab1,
+			(HMENU)(IDB_ABIL_MINUS5_BASE + index), GetModuleHandle(NULL), NULL);
+		setup_control(hw_minus, ghFont, scale_cntl_proc);
+	}
 }
 
 void setup_tab2(HWND H)

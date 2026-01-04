@@ -5,6 +5,7 @@
 #include "window.h"
 #include "aatf.h"
 #include <string>
+#include <algorithm>
 #include <Windows.h>
 #pragma comment(lib, "Winmm.lib")
 #include <mmsystem.h>
@@ -16,6 +17,49 @@ static void CopyAnsiToTchar(TCHAR* dest, size_t destCount, const char* src)
 #else
 	strncpy_s(dest, destCount, src, _TRUNCATE);
 #endif
+}
+
+static void AdjustAbilityEdit(int editId, int delta)
+{
+	HWND hw_edit = GetDlgItem(ghw_tab1, editId);
+	if (!hw_edit) return;
+
+	BOOL ok = FALSE;
+	int value = GetDlgItemInt(ghw_tab1, editId, &ok, FALSE);
+	if (!ok) value = 0;
+
+	int minVal = 0;
+	int maxVal = 99;
+	HWND hw_updown = GetDlgItem(ghw_tab1, editId + 1);
+	if (hw_updown)
+	{
+		int minRange = 0;
+		int maxRange = 0;
+		SendMessage(hw_updown, UDM_GETRANGE32, (WPARAM)&minRange, (LPARAM)&maxRange);
+		if (minRange == 0 && maxRange == 0)
+		{
+			DWORD range = (DWORD)SendMessage(hw_updown, UDM_GETRANGE, 0, 0);
+			minRange = (short)LOWORD(range);
+			maxRange = (short)HIWORD(range);
+		}
+		if (minRange != 0 || maxRange != 0)
+		{
+			minVal = minRange;
+			maxVal = maxRange;
+		}
+	}
+
+	int newVal = value + delta;
+	if (newVal < minVal) newVal = minVal;
+	if (newVal > maxVal) newVal = maxVal;
+	if (hw_updown)
+	{
+		SendMessage(hw_updown, UDM_SETPOS32, 0, (LPARAM)newVal);
+	}
+	else
+	{
+		SetDlgItemInt(ghw_tab1, editId, newVal, FALSE);
+	}
 }
 
 //----------------------------------------------------------------------
@@ -141,6 +185,66 @@ pf_destroyFileDescriptor15 destroyFileDescriptor15;
 pf_decryptFile15 decryptFile15;
 pf_encryptFile15 encryptFile15;
 
+static int CalcPlayerStatTotal(const player_entry& p, int pesVersion)
+{
+	int total = 0;
+	total += p.atk;
+	total += p.def;
+	total += p.gk;
+	total += p.drib;
+	total += p.finish;
+	total += p.lowpass;
+	total += p.loftpass;
+	total += p.header;
+	total += p.form;
+	total += p.swerve;
+	total += p.body_ctrl;
+	total += p.kick_pwr;
+	total += p.exp_pwr;
+	total += p.ball_ctrl;
+	total += p.ball_win;
+	total += p.weak_acc;
+	total += p.jump;
+	total += p.weak_use;
+	total += p.stamina;
+	total += p.speed;
+	total += p.place_kick;
+	total += p.injury;
+	total += p.catching;
+	if (pesVersion >= 16)
+	{
+		total += p.clearing;
+		total += p.reflex;
+		total += p.cover;
+	}
+	if (pesVersion >= 17)
+	{
+		total += p.phys_cont;
+	}
+	if (pesVersion >= 19)
+	{
+		total += p.star;
+	}
+	if (pesVersion >= 20)
+	{
+		total += p.tight_pos;
+		total += p.aggres;
+		total += p.play_attit;
+	}
+	return total;
+}
+
+static void SortPlayerIndicesByStats(int* indices, int count, int pesVersion)
+{
+	if (!indices || count <= 1) return;
+	std::stable_sort(indices, indices + count, [pesVersion](int a, int b) {
+		int scoreA = CalcPlayerStatTotal(gplayers[a], pesVersion);
+		int scoreB = CalcPlayerStatTotal(gplayers[b], pesVersion);
+		if (scoreA != scoreB) return scoreA > scoreB;
+		return _wcsicmp(gplayers[a].name, gplayers[b].name) < 0;
+	});
+}
+
 //The TCHAR-version of a user-provided entry point for a graphical 
 //  Windows-based application.
 // I 	[in] A handle to the current instance of the application
@@ -188,7 +292,7 @@ int APIENTRY _tWinMain(HINSTANCE I, HINSTANCE PI, LPTSTR CL, int SC)
 		wc.lpszClassName,
 		_T("4ccEditor Autumn 25 Edition (Version A)"),
 		WS_OVERLAPPEDWINDOW,
-		20, 20, 1120+144, 700,
+		20, 20, 1120+204, 700,
 		NULL, NULL, ghinst, NULL);
 
 	if(ghw_main == NULL)
@@ -250,7 +354,7 @@ LRESULT CALLBACK wnd_proc(HWND H, UINT M, WPARAM W, LPARAM L)
                 CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, TEXT("Segoe UI"));
 
 			hw_new = CreateWindowEx(0,_T("SCROLLBAR"),(PTSTR) NULL, WS_CHILD | SBS_HORZ, 
-				0, 642-18, 1102, 18, H, (HMENU)IDC_HSCROLL, GetModuleHandle(NULL), (PVOID) NULL);
+				0, 642-18, 1162, 18, H, (HMENU)IDC_HSCROLL, GetModuleHandle(NULL), (PVOID) NULL);
 
 			RECT rc = {};
 			GetClientRect(H, &rc);
@@ -276,7 +380,7 @@ LRESULT CALLBACK wnd_proc(HWND H, UINT M, WPARAM W, LPARAM L)
 
 			if(y1<700)
 			{
-				x2 = y1/700*1120;
+				x2 = y1/700*1180;
 				if(x2>x1) x2=x1;
 				SetWindowPos(H,0,0,0,x2,y1,SWP_NOZORDER);
 			}
@@ -703,6 +807,22 @@ LRESULT CALLBACK wnd_proc(HWND H, UINT M, WPARAM W, LPARAM L)
 			int ret;
 			int prevPesVersion;
 			memset(buffer, 0, sizeof(buffer));
+			{
+				int cmdId = LOWORD(W);
+				int abilCount = (IDT_ABIL_INJU - IDT_ABIL_ATKP) / 2 + 1;
+				if (cmdId >= IDB_ABIL_PLUS5_BASE && cmdId < IDB_ABIL_PLUS5_BASE + abilCount)
+				{
+					int editId = IDT_ABIL_ATKP + (cmdId - IDB_ABIL_PLUS5_BASE) * 2;
+					AdjustAbilityEdit(editId, 5);
+					break;
+				}
+				if (cmdId >= IDB_ABIL_MINUS5_BASE && cmdId < IDB_ABIL_MINUS5_BASE + abilCount)
+				{
+					int editId = IDT_ABIL_ATKP + (cmdId - IDB_ABIL_MINUS5_BASE) * 2;
+					AdjustAbilityEdit(editId, -5);
+					break;
+				}
+			}
 			switch(LOWORD(W))
 			{
 				case ID_FILE_EXIT:
@@ -826,10 +946,6 @@ LRESULT CALLBACK wnd_proc(HWND H, UINT M, WPARAM W, LPARAM L)
 								gn_playind = new int[num_on_team];
 								for (int ii=0; ii<num_on_team; ii++) gn_playind[ii] = -1;
 
-								SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_DELETEALLITEMS, 0, 0);
-								LVITEM lvI;
-								memset(&lvI,0,sizeof(lvI)); //Zero out struct members
-								lvI.mask = LVIF_TEXT;
 								int kk=0;
 								for(ii=0;ii<gnum_players;ii++)
 								{
@@ -838,14 +954,22 @@ LRESULT CALLBACK wnd_proc(HWND H, UINT M, WPARAM W, LPARAM L)
 										if(gplayers[ii].id == gteams[gn_teamCbIndToArray[csel]].players[jj])
 										{
 											gn_playind[kk] = ii;
-											lvI.pszText = gplayers[ii].name;
-											lvI.iItem = kk;
-											SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
 											kk++;
 											break;
 										}
 									}
 									if(kk==num_on_team) break;
+								}
+								SortPlayerIndicesByStats(gn_playind, kk, giPesVersion);
+								SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_DELETEALLITEMS, 0, 0);
+								LVITEM lvI;
+								memset(&lvI,0,sizeof(lvI)); //Zero out struct members
+								lvI.mask = LVIF_TEXT;
+								for (ii = 0; ii < kk; ii++)
+								{
+									lvI.pszText = gplayers[gn_playind[ii]].name;
+									lvI.iItem = ii;
+									SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
 								}
 
 								gn_teamsel = gn_teamCbIndToArray[csel]; //Update ID of currently selected team
@@ -2211,20 +2335,24 @@ void fill_list_all_players()
 	if(gn_playind != NULL) delete[] gn_playind;
 	gn_playind = new int[gnum_players];
 	SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_DELETEALLITEMS, 0, 0);
-	LVITEM lvI;
-	memset(&lvI,0,sizeof(lvI)); //Zero out struct members
-	lvI.mask = LVIF_TEXT;
 	jj=0;
 	for(ii=0;ii<gnum_players;ii++)
 	{
 		if(gplayers[ii].b_show)
 		{
 			gn_playind[jj] = ii;
-			lvI.pszText = gplayers[ii].name;
-			lvI.iItem = jj;
-			SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
 			jj++;
 		}
+	}
+	SortPlayerIndicesByStats(gn_playind, jj, giPesVersion);
+	LVITEM lvI;
+	memset(&lvI,0,sizeof(lvI)); //Zero out struct members
+	lvI.mask = LVIF_TEXT;
+	for (ii = 0; ii < jj; ii++)
+	{
+		lvI.pszText = gplayers[gn_playind[ii]].name;
+		lvI.iItem = ii;
+		SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
 	}
 	//gn_listsel = 0;
 	//ListView_SetItemState(GetDlgItem(ghw_main, IDC_NAME_LIST), 0, LVIS_SELECTED, LVIS_SELECTED);	
@@ -3440,17 +3568,40 @@ LRESULT CALLBACK scale_cntl_proc(HWND H, UINT M, WPARAM W, LPARAM L,
 		}
 		break;
 
-		case WM_KEYDOWN:
-		{
-			common_shortcuts(W);
-		}
-		break;
+	case WM_KEYDOWN:
+	{
+		common_shortcuts(W);
+	}
+	break;
 
-		case WM_DESTROY:
+	case WM_COMMAND:
+	{
+		int cmdId = LOWORD(W);
+		int notify = HIWORD(W);
+		if (notify == BN_CLICKED)
 		{
-			delete (RECT*)dwRefData;
+			const int abilCount = (IDT_ABIL_INJU - IDT_ABIL_ATKP) / 2 + 1;
+			if (cmdId >= IDB_ABIL_PLUS5_BASE && cmdId < IDB_ABIL_PLUS5_BASE + abilCount)
+			{
+				int editId = IDT_ABIL_ATKP + (cmdId - IDB_ABIL_PLUS5_BASE) * 2;
+				AdjustAbilityEdit(editId, 5);
+				return 0;
+			}
+			if (cmdId >= IDB_ABIL_MINUS5_BASE && cmdId < IDB_ABIL_MINUS5_BASE + abilCount)
+			{
+				int editId = IDT_ABIL_ATKP + (cmdId - IDB_ABIL_MINUS5_BASE) * 2;
+				AdjustAbilityEdit(editId, -5);
+				return 0;
+			}
 		}
-		break;
+	}
+	break;
+
+	case WM_DESTROY:
+	{
+		delete (RECT*)dwRefData;
+	}
+	break;
 	}
 	return DefSubclassProc(H, M, W, L);
 }
@@ -4029,23 +4180,26 @@ void trim_team()
 	if(gn_playind != NULL) delete[] gn_playind;
 	gn_playind = new int[num_on_team];
 
-	SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_DELETEALLITEMS, 0, 0);
-	LVITEM lvI;
-	memset(&lvI,0,sizeof(lvI)); //Zero out struct members
-	lvI.mask = LVIF_TEXT;
 	jj=0;
 	for(ii=0;ii<gnum_players;ii++)
 	{
 		if(gplayers[ii].id == gteams[csel].players[jj] && gplayers[ii].b_show)
 		{
 			gn_playind[jj] = ii;
-			lvI.pszText = gplayers[ii].name;
-			lvI.iItem = jj;
-			SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
-
 			jj++;
 		}
 		if(jj==num_on_team) break;
+	}
+	SortPlayerIndicesByStats(gn_playind, jj, giPesVersion);
+	SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_DELETEALLITEMS, 0, 0);
+	LVITEM lvI;
+	memset(&lvI,0,sizeof(lvI)); //Zero out struct members
+	lvI.mask = LVIF_TEXT;
+	for (ii = 0; ii < jj; ii++)
+	{
+		lvI.pszText = gplayers[gn_playind[ii]].name;
+		lvI.iItem = ii;
+		SendDlgItemMessage(ghw_main, IDC_NAME_LIST, LVM_INSERTITEM, 0, (LPARAM)&lvI);
 	}
 	ListView_SetItemState(GetDlgItem(ghw_main, IDC_NAME_LIST), 0, LVIS_SELECTED, LVIS_SELECTED);
 	gn_listsel = 0;
